@@ -17,7 +17,7 @@ type Application struct {
 	Appname    string   `mapstructure:"appname"`
 	Live       bool     `mapstructure:"live"`
 	Hls        bool     `mapstructure:"hls"`
-	Flv        bool     `mapstructure:"flv"`
+	FLVViaHTTP bool     `mapstructure:"flv_via_http"`
 	Api        bool     `mapstructure:"api"`
 	StaticPush []string `mapstructure:"static_push"`
 }
@@ -33,9 +33,9 @@ func DefaultApplication() Application {
 	return Application{
 		Appname:    "live",
 		Live:       true,
-		Hls:        true,
-		Flv:        true,
-		Api:        true,
+		Hls:        false,
+		FLVViaHTTP: false,
+		Api:        false,
 		StaticPush: nil,
 	}
 }
@@ -62,7 +62,7 @@ type RTMPConfig struct {
 	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 
-	RTMPSConfig *RTMPSConfig `mapstructure:"rtmps"`
+	RTMPS *RTMPSConfig `mapstructure:"rtmps"`
 }
 
 func (c *RTMPConfig) Validate() error {
@@ -77,8 +77,8 @@ func (c *RTMPConfig) Validate() error {
 		return fmt.Errorf("rtmp write_timeout must be between 1s and 30s. Value found: '%s'", c.WriteTimeout)
 	}
 
-	if c.RTMPSConfig != nil {
-		if c.RTMPSConfig.CertFile == "" || c.RTMPSConfig.KeyFile == "" {
+	if c.RTMPS != nil {
+		if c.RTMPS.CertFile == "" || c.RTMPS.KeyFile == "" {
 			return fmt.Errorf("both cert_file and key_file must be provided for RTMPS if RTMPS is defined in the config")
 		}
 	}
@@ -94,13 +94,12 @@ func DefaultRTMPConfig() RTMPConfig {
 		FLVDir:       "flv",
 		ReadTimeout:  time.Second * 10,
 		WriteTimeout: time.Second * 10,
-		RTMPSConfig:  nil,
+		RTMPS:        nil,
 	}
 }
 
 type HLSConfig struct {
-	Address     string `mapstructure:"address"`
-	HTTPFLVAddr string `mapstructure:"httpflv_addr"` // address to server the HTTP-FLV stream, e.g. ":7001"
+	Address string `mapstructure:"address"`
 
 	KeepAfterEnd    bool `mapstructure:"keep_after_end"`
 	SegmentDuration int  `mapstructure:"segment_duration"`
@@ -110,10 +109,24 @@ type HLSConfig struct {
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 }
 
+func (c *HLSConfig) Validate() error {
+	if c.Address == "" {
+		return fmt.Errorf("hls address cannot be empty")
+	}
+
+	if c.ReadTimeout <= 0 || c.ReadTimeout > 30*time.Second {
+		return fmt.Errorf("hls read_timeout must be between 1s and 30s. Value found: '%s'", c.ReadTimeout)
+	}
+	if c.WriteTimeout <= 0 || c.WriteTimeout > 30*time.Second {
+		return fmt.Errorf("hls write_timeout must be between 1s and 30s. Value found: '%s'", c.WriteTimeout)
+	}
+
+	return nil
+}
+
 func DefaultHLSConfig() HLSConfig {
 	return HLSConfig{
 		Address:         ":7002",
-		HTTPFLVAddr:     ":7001",
 		KeepAfterEnd:    false,
 		SegmentDuration: 5,
 		EnableTLSVerify: true,
@@ -126,6 +139,16 @@ type RedisConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Addr    string `mapstructure:"addr"`
 	Pwd     string `mapstructure:"pwd"`
+}
+
+func (c *RedisConfig) Validate() error {
+	if c.Enabled {
+		if c.Addr == "" {
+			return fmt.Errorf("redis addr cannot be empty when redis is enabled")
+		}
+	}
+
+	return nil
 }
 
 func DefaultRedisConfig() RedisConfig {
@@ -145,7 +168,8 @@ type Config struct {
 	HLS   HLSConfig   `mapstructure:"hls"`
 	Redis RedisConfig `mapstructure:"redis"`
 
-	APIAddr string `mapstructure:"api_addr"`
+	APIAddr     string `mapstructure:"api_addr"`
+	HTTPFLVAddr string `mapstructure:"httpflv_addr"` // address to server the HTTP-FLV stream, e.g. ":7001"
 
 	GopNum int `mapstructure:"gop_num"`
 
@@ -163,6 +187,32 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("api_addr cannot be empty")
 	}
 
+	if err := c.RTMP.Validate(); err != nil {
+		return fmt.Errorf("rtmp config validation failed: %w", err)
+	}
+
+	for _, app := range c.Server {
+		if err := app.Validate(); err != nil {
+			return fmt.Errorf("application '%s' validation failed: %w", app.Appname, err)
+		}
+		if app.Hls {
+			if err := c.HLS.Validate(); err != nil {
+				return fmt.Errorf("application '%s' HLS config validation failed: %w", app.Appname, err)
+			}
+		}
+		if app.FLVViaHTTP {
+			if c.HTTPFLVAddr == "" {
+				return fmt.Errorf("application '%s' requires httpflv_addr to be set in config when flv_via_http is enabled", app.Appname)
+			}
+		}
+		if app.Api {
+			if c.APIAddr == "" {
+				return fmt.Errorf("application '%s' requires api_addr to be set in config when api is enabled", app.Appname)
+			}
+		}
+
+	}
+
 	return nil
 }
 
@@ -175,7 +225,8 @@ func DefaultConfig() *Config {
 		HLS:   DefaultHLSConfig(),
 		Redis: DefaultRedisConfig(),
 
-		APIAddr: ":8080",
+		APIAddr:     ":8080",
+		HTTPFLVAddr: ":7001",
 
 		GopNum: 10,
 
@@ -200,7 +251,6 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 		return nil, err
 	}
-
 	fileExt := configPath[len(configPath)-5:]
 
 	if fileExt == ".json" {
@@ -225,12 +275,8 @@ func LoadConfig(configPath string) (*Config, error) {
 		return cfg, nil
 	}
 
-	if cfg.Server != nil {
-		for i, app := range cfg.Server {
-			if err := app.Validate(); err != nil {
-				return nil, fmt.Errorf("validation failed for server[%d]: %v", i, err)
-			}
-		}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	return cfg, nil
