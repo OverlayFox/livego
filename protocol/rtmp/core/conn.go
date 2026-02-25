@@ -48,32 +48,37 @@ func NewConn(c net.Conn, bufferSize int) *Conn {
 func (conn *Conn) Read(c *ChunkStream) error {
 	for {
 		h, _ := conn.rw.ReadUintBE(1)
-		// if err != nil {
-		// 	log.Println("read from conn error: ", err)
-		// 	return err
-		// }
 		format := h >> 6
 		csid := h & 0x3f
 		cs, ok := conn.chunks[csid]
 		if !ok {
 			cs = ChunkStream{}
-			conn.chunks[csid] = cs
 		}
 		cs.tmpFromat = format
 		cs.CSID = csid
+
 		err := cs.readChunk(conn.rw, conn.remoteChunkSize, conn.pool)
 		if err != nil {
 			return err
 		}
-		conn.chunks[csid] = cs
+
 		if cs.full() {
 			*c = cs
+			c.Data = make([]byte, len(cs.Data))
+			copy(c.Data, cs.Data)
+			conn.pool.Reset()
+			delete(conn.chunks, csid)
 			break
 		}
+
+		if cs.Data != nil {
+			permanent := make([]byte, len(cs.Data))
+			copy(permanent, cs.Data)
+			cs.Data = permanent
+		}
+		conn.chunks[csid] = cs
 	}
-
 	conn.handleControlMsg(c)
-
 	conn.ack(c.Length)
 
 	return nil
@@ -169,10 +174,10 @@ const (
 )
 
 /*
-   +------------------------------+-------------------------
-   |     Event Type ( 2- bytes )  | Event Data
-   +------------------------------+-------------------------
-   Pay load for the ‘User Control Message’.
++------------------------------+-------------------------
+|     Event Type ( 2- bytes )  | Event Data
++------------------------------+-------------------------
+Pay load for the ‘User Control Message’.
 */
 func (conn *Conn) userControlMsg(eventType, buflen uint32) ChunkStream {
 	var ret ChunkStream
