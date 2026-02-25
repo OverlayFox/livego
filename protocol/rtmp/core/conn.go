@@ -28,7 +28,6 @@ type Conn struct {
 	received            uint32
 	ackReceived         uint32
 	rw                  *ReadWriter
-	pool                *pool.Pool
 	chunks              map[uint32]ChunkStream
 }
 
@@ -39,7 +38,6 @@ func NewConn(c net.Conn, bufferSize int) *Conn {
 		remoteChunkSize:     128,
 		windowAckSize:       2500000,
 		remoteWindowAckSize: 2500000,
-		pool:                pool.NewPool(),
 		rw:                  NewReadWriter(c, bufferSize),
 		chunks:              make(map[uint32]ChunkStream),
 	}
@@ -57,30 +55,25 @@ func (conn *Conn) Read(c *ChunkStream) error {
 		cs.tmpFromat = format
 		cs.CSID = csid
 
-		err := cs.readChunk(conn.rw, conn.remoteChunkSize, conn.pool)
+		err := cs.readChunk(conn.rw, conn.remoteChunkSize)
 		if err != nil {
 			return err
 		}
+		conn.chunks[csid] = cs
 
 		if cs.full() {
 			*c = cs
 			c.Data = make([]byte, len(cs.Data))
 			copy(c.Data, cs.Data)
-			delete(conn.chunks, csid)
 
-			if len(conn.chunks) == 0 {
-				conn.pool.Reset()
-			}
+			pool.Put(cs.Data)
+			cs.Data = nil
+			conn.chunks[csid] = cs
+
 			break
 		}
-
-		if cs.Data != nil {
-			permanent := make([]byte, len(cs.Data))
-			copy(permanent, cs.Data)
-			cs.Data = permanent
-		}
-		conn.chunks[csid] = cs
 	}
+
 	conn.handleControlMsg(c)
 	conn.ack(c.Length)
 
