@@ -1,4 +1,5 @@
 # Changelog
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -6,41 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed arena pool returning slices when requested size exceeds bounds
+
+## [Upstream-LiveGo]
+
 ### Added
+
 - JSON Web Token support.
-``` json 
-    // livego.json
+
+```json
+// livego.json
+{
+  "jwt": {
+    "secret": "testing",
+    "algorithm": "HS256"
+  },
+  "server": [
     {
-        "jwt": {
-            "secret": "testing",
-            "algorithm": "HS256"
-        },
-        "server": [
-            {
-                "appname": "live",
-                "live": true,
-                "hls": true
-            }
-        ]
+      "appname": "live",
+      "live": true,
+      "hls": true
     }
+  ]
+}
 ```
+
 - Use redis for store room keys
-``` json 
-    // livego.json
+
+```json
+// livego.json
+{
+  "redis_addr": "localhost:6379",
+  "server": [
     {
-        "redis_addr": "localhost:6379", 
-        "server": [
-            {
-                "appname": "live",
-                "live": true,
-                "hls": true
-            }
-        ]
+      "appname": "live",
+      "live": true,
+      "hls": true
     }
+  ]
+}
 ```
+
 - Makefile
 
 ### Changed
+
 - Show `players`.
 - Show `stream_id`.
 - Deleted keys saved in physical file, now the keys are in cached using `go-cache` by default.
