@@ -66,8 +66,11 @@ func (conn *Conn) Read(c *ChunkStream) error {
 			*c = cs
 			c.Data = make([]byte, len(cs.Data))
 			copy(c.Data, cs.Data)
-			conn.pool.Reset()
 			delete(conn.chunks, csid)
+
+			if len(conn.chunks) == 0 {
+				conn.pool.Reset()
+			}
 			break
 		}
 
