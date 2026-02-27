@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- fixed a out of range panic in the parsing of flv audio headers
+
 ## [0.0.21]
 
 ### Fixed
